@@ -1,3 +1,150 @@
+var updateTimeout;
+var paintTimeout;
+
+// - initialize variables ----------------------------------------------
+var jenkinsTimeOut = getParameterByName("jenkinsTimeOut", 15000);
+var lastJenkinsTimeOut = jenkinsTimeOut;
+
+var jenkinsUpdateInterval = getParameterByName("jenkinsUpdateInterval", 20000);
+var lastJenkinsUpdateInterval = jenkinsUpdateInterval;
+
+var paintInterval = getParameterByName("jenkinsPaintInterval", 100);
+var blinkInterval = 500;
+var lastPaintInterval = paintInterval;
+var arranDebug = true;
+var jenkinsUrl = arranDebug ? "http://localhost:8080/" : getParameterByName("jenkinsUrl", window.location.protocol + "://" + window.location.host + "/"
+    + window.location.pathname.replace("plugin/jenkinswalldisplay/walldisplay.html", ""));
+var viewName = getParameterByName("viewName", "All");
+var theme = getParameterByName("theme", "default");
+var fontFamily = getParameterByName("fontFamily", "sans-serif");
+var sortOrder = getParameterByName("sortOrder", "job name");
+var buildRange = getParameterByName("buildRange", "all");
+var customTheme = getParameterByName("customTheme", null);
+var showDetails = false;
+var showGravatar = false;
+var jobGravatarCache = {};
+var gravatarCounter = {};
+var showBuildNumber = true;
+var showWeatherReport = false;
+var showLastStableTimeAgo = true;
+var blinkBgPicturesWhenBuilding = false;
+var showDisabledBuilds = true;
+var maxQueuePositionToShow = 15;
+
+var jobStatusOrder = [];
+jobStatusOrder["blue"] = 0;
+jobStatusOrder["blue_building"] = 1;
+jobStatusOrder["red"] = 2;
+jobStatusOrder["red_building"] = 3;
+jobStatusOrder["yellow"] = 4;
+jobStatusOrder["yellow_building"] = 5;
+jobStatusOrder["aborted"] = 6;
+jobStatusOrder["aborted_building"] = 7;
+jobStatusOrder["grey"] = 8;
+jobStatusOrder["grey_building"] = 9;
+
+var isDebug = false;
+var debugString = getParameterByName("debug", null);
+if(debugString != null){
+    isDebug = true;
+}
+
+// ---------------------------------------------------------------------
+$.ajaxSetup({
+    cache: false
+});
+
+var jobPadding = 5;
+var jobMargin = 8;
+var jobBorderWidth = 0;
+var paintInterval = 1000;
+var jobInfoTimout = 5000;
+
+// ---------------------------------------------------------------------
+var rows = 0;
+var columns = 0;
+var jobIndex = 0;
+var jobsToDisplay = new Array();
+var serverTime = 0;
+var updateRunning = new Array();
+var updateError = null;
+var clientWidth;
+var clientHeight;
+var lastPluginVersion = null;
+var lastTheme = "default";
+var lastFontFamily = fontFamily;
+var paintRunning = false;
+
+// ---------------------------------------------------------------------
+// themes
+// ---------------------------------------------------------------------
+var themes = {};
+themes.christmas = {};
+themes["default"] = {};
+
+themes.christmas.start = function(){
+    $(document).snowfall('clear');
+    $(document).snowfall({
+        round: true,
+        minSize: 8,
+        maxSize: 12
+    }); // add rounded
+};
+themes.christmas.stop = function(){
+    $(document).snowfall('clear');
+};
+
+$(document).ready(function(){
+    $("abbr.timeago").timeago();
+
+    debug("started jenkins wall display");
+    debug("url '" + jenkinsUrl + "'");
+    debug("view name: '" + viewName + "'");
+
+    updateWindowSizes();
+
+    document.title = "Jenkins Wall Display (" + viewName + ")";
+
+    update();
+	repaint();
+});
+
+window.onresize = function(event){
+    updateWindowSizes();
+};
+
+function update() { 
+	updateJobs();
+	updatePluginConfiguration();
+	updateTimeout = setTimeout(update, jenkinsUpdateInterval);
+}
+
+
+function updateJobs() {
+	if (!updateRunning[viewName]) {
+		debug("starting update of view " + viewName + " at every " + jenkinsUpdateInterval + "ms");
+        getJenkinsApi(jenkinsUrl);
+		debug("finished update of view " + viewName);
+    }
+
+    if (!updateRunning["queue"]) {
+		debug("starting queue update of view " + viewName + " at every " + jenkinsUpdateInterval + "ms");
+        getJenkinsQueue(jenkinsUrl);
+		debug("finished update of view " + viewName);
+	}
+}
+
+function updatePluginConfiguration() { 
+	if (!updateRunning["pluginconfiguration"]) {
+        getPluginConfiguration(jenkinsUrl);
+    }
+}
+
+Math.logBase = function(n, base) {
+    return Math.log(n) / Math.log(base);
+};
+
+
 function getQueueDivs(jobWidth, jobHeight, queuePosition) {
     var queueDivs = [],
 		maxPerColumn = 3,
@@ -231,7 +378,7 @@ function repaint() {
                         var queueDivs = getQueueDivs(jobWidth, jobHeight, getBuildQueuePosition(job.name));
 
                         // - create the gravatar img ------------------------
-                        if(!jobGravatarCache[job.name] || gravatarCounter[job.name] >= 5){
+                        if (!jobGravatarCache[job.name] || gravatarCounter[job.name] >= 5) {
                             var jobGravatar = $('<img />');
                             jobGravatar.attr('src', getGravatarUrl(job, showGravatar, Math
                                 .round(jobDimensions.height * 0.80)));
@@ -244,7 +391,7 @@ function repaint() {
 
                             jobGravatarCache[job.name] = jobGravatar;
                             gravatarCounter[job.name] = 0;
-                        }else{
+                        } else {
                             gravatarCounter[job.name] = parseInt(gravatarCounter[job.name]) + 1;
                         }
 
@@ -353,6 +500,8 @@ function repaint() {
             }
         }
     }
+	
+	paintTimeout = setTimeout(repaint, paintInterval);
 }
 
 function removeAllJobs(){
@@ -375,7 +524,7 @@ function getJobs(jobNames){
         .each(
             jobNames,
             function(index, jobName){
-                if(!updateRunning[jobName]){
+                if (!updateRunning[jobName]) {
                     debug("starting getting api for job '" + jobName + "'");
                     updateRunning[jobName] = true;
 
@@ -433,11 +582,11 @@ function getJobs(jobNames){
 									jobsToDisplay.push(job);
 								}
 
-                                jobsToDisplay.sort(function(job1, job2){
+                                jobsToDisplay.sort(function(job1, job2) {
 
                                     var sort = 0;
 
-                                    if(sortOrder == "job status"){
+                                    if (sortOrder == "job status") {
                                         sort = jobStatusOrder[job1.color] - jobStatusOrder[job2.color];
                                     } else if (sortOrder == "job priority") {
                                         sort = job1.priority - job2.priority;
@@ -472,7 +621,7 @@ function getJobNamesToDisplay(viewApi){
         jobNames.push(job.name);
     });
 
-    if(viewApi.views != null && viewApi.views.length){
+    if(viewApi.views && viewApi.views.length){
         $.each(viewApi.views, function(index, nestedView){
             $.each(nestedView.jobs, function(index, job){
                 jobNames.push(job.name);
@@ -483,24 +632,13 @@ function getJobNamesToDisplay(viewApi){
     return jobNames;
 }
 
-function debug(logMessage){
-    if($("#debug").length){
-        var now = new Date();
-        $("#debug").append(now.format("G:i:s.u: ") + logMessage + "<br />");
-        $("#debug").prop({
-            scrollTop: $("#debug").prop("scrollHeight")
-        });
-    }
+function debug(logMessage) {
+	if (isDebug) {
+		console.log(logMessage);
+	}
 }
 
-function showDebug(){
-    var debugDiv = $('<div />').attr({
-        "id": "debug"
-    }).addClass("debug");
-
-    $("body").prepend(debugDiv);
-}
-function showJobinfo(job){
+function showJobinfo(job) {
     $("#JobInfo").remove();
     if(!$("#JobInfo").length){
         var jobInfoDiv = $('<div />').attr({
@@ -598,7 +736,7 @@ function updateShutdownMessage(quietingDown){
     }
 }
 
-function getJenkinsApi(jenkinsUrl){
+function getJenkinsApi(jenkinsUrl) {
 
     debug("starting getting jenkins api");
     updateRunning[viewName] = true;
@@ -650,7 +788,7 @@ function getBuildQueuePosition(jobName){
 }
 
 var buildQueue = null;
-function getJenkinsQueue(jenkinsUrl){
+function getJenkinsQueue(jenkinsUrl) {
 
     debug("starting getting queue api");
     updateRunning["queue"] = true;
@@ -673,7 +811,7 @@ function getJenkinsQueue(jenkinsUrl){
     });
 }
 
-function getPluginConfiguration(jenkinsUrl){
+function getPluginConfiguration(jenkinsUrl) {
 
     debug("starting getting plugin api");
     updateRunning["pluginconfiguration"] = true;
@@ -694,67 +832,67 @@ function getPluginConfiguration(jenkinsUrl){
 
             if(plugin.config && plugin.config != null){
                 // parameters specified in URL should override any set in plugin config.
-                if(plugin.config.theme && plugin.config.theme != null){
+                if (plugin.config.theme && plugin.config.theme != null) {
                     theme = getParameterByName('theme', plugin.config.theme.toLowerCase());
                 }
 
-                if(plugin.config.customTheme && plugin.config.customTheme != null){
+                if (plugin.config.customTheme && plugin.config.customTheme != null) {
                     customTheme = getParameterByName('customTheme', plugin.config.customTheme);
                 }
 
-                if(plugin.config.buildRange && plugin.config.buildRange != null){
+                if (plugin.config.buildRange && plugin.config.buildRange != null) {
                     buildRange = getParameterByName('buildRange', plugin.config.buildRange.toLowerCase());
                 }
 
-                if(plugin.config.fontFamily && plugin.config.fontFamily != null){
+                if (plugin.config.fontFamily && plugin.config.fontFamily != null) {
                     fontFamily = getParameterByName('fontFamily', plugin.config.fontFamily.toLowerCase());
                 }
 
-                if(plugin.config.sortOrder && plugin.config.sortOrder != null){
+                if (plugin.config.sortOrder && plugin.config.sortOrder != null) {
                     sortOrder = getParameterByName('sortOrder', plugin.config.sortOrder.toLowerCase());
                 }
 
-                if(plugin.config.showDetails != null){
+                if (plugin.config.showDetails != null) {
                     showDetails = getParameterByName('showDetails', plugin.config.showDetails);
                 }
 
-                if(plugin.config.showGravatar != null){
+                if (plugin.config.showGravatar != null) {
                     showGravatar = getParameterByName('showGravatar', plugin.config.showGravatar);
                 }
 
-                if(plugin.config.showBuildNumber != null){
+                if (plugin.config.showBuildNumber != null) {
                     showBuildNumber = getParameterByName('showBuildNumber', plugin.config.showBuildNumber);
                 }
 
-                if(plugin.config.showWeatherReport != null){
+                if (plugin.config.showWeatherReport != null) {
                     showWeatherReport = getParameterByName('showWeatherReport', plugin.config.showWeatherReport);
                 }
 
-                if(plugin.config.showLastStableTimeAgo != null){
+                if (plugin.config.showLastStableTimeAgo != null) {
                     showLastStableTimeAgo = getParameterByName('showLastStableTimeAgo', plugin.config.showLastStableTimeAgo);
                 }
 
-                if(plugin.config.blinkBgPicturesWhenBuilding != null){
+                if (plugin.config.blinkBgPicturesWhenBuilding != null) {
                     blinkBgPicturesWhenBuilding = getParameterByName('blinkBgPicturesWhenBuilding', plugin.config.blinkBgPicturesWhenBuilding);
                 }
 
-                if(plugin.config.showDisabledBuilds != null){
+                if (plugin.config.showDisabledBuilds != null) {
                     showDisabledBuilds = getParameterByName('showDisabledBuilds', plugin.config.showDisabledBuilds);
                 }
 
-                if(isNumber(plugin.config.jenkinsUpdateInterval)){
+                if (isNumber(plugin.config.jenkinsUpdateInterval)) {
                     jenkinsUpdateInterval = getParameterByName('jenkinsUpdateInterval', plugin.config.jenkinsUpdateInterval) * 1000;
                 }
 
-                if(isNumber(plugin.config.paintInterval)){
+                if (isNumber(plugin.config.paintInterval)) {
                     paintInterval = plugin.config.paintInterval * 1000;
                     // Blink interval is the time interval for
                     // fadingOut/fadingIn
                     // of background pictures of jobs
                     blinkInterval = (paintInterval == 0 ? 1000 : paintInterval);
-                    do{
+                    do {
                         blinkInterval /= 2;
-                    }while(blinkInterval > 3000);
+                    } while(blinkInterval > 3000);
                 }
 
                 if(isNumber(plugin.config.jenkinsTimeOut)){
@@ -762,33 +900,29 @@ function getPluginConfiguration(jenkinsUrl){
                 }
             }
 
-            if(lastJenkinsUpdateInterval != jenkinsUpdateInterval || lastJenkinsTimeOut != jenkinsTimeOut){
-                clearApiInterval();
-                setApiInterval();
-
+            if (lastJenkinsUpdateInterval != jenkinsUpdateInterval || lastJenkinsTimeOut != jenkinsTimeOut) {
                 lastJenkinsUpdateInterval = jenkinsUpdateInterval;
                 lastJenkinsTimeOut = jenkinsTimeOut;
+				clearTimeout(updateTimeout);
+				setTimeout(update, jenkinsUpdateInterval);
             }
 
-            if(lastPaintInterval != paintInterval){
-                clearPaintInterval();
-                setPaintInterval();
-
+            if (lastPaintInterval != paintInterval) {
                 lastPaintInterval = paintInterval;
+				clearTimeout(updateTimeout);
+				setTimeout(update, jenkinsUpdateInterval);
             }
 
-            if(theme != null){
-                if(lastTheme != theme){
-                    $("body").addClass(theme);
+            if (theme && lastTheme && lastTheme != theme) {
+				$("body").addClass(theme);
 
-                    if(themes[lastTheme] && typeof themes[lastTheme].stop === 'function'){
-                        themes[lastTheme].stop();
-                    }
+				if(themes[lastTheme] && typeof themes[lastTheme].stop === 'function'){
+					themes[lastTheme].stop();
+				}
 
-                    if(themes[theme] && typeof themes[theme].start === 'function'){
-                        themes[theme].start();
-                    }
-                }
+				if(themes[theme] && typeof themes[theme].start === 'function'){
+					themes[theme].start();
+				}
 
                 lastTheme = theme;
             }
@@ -800,7 +934,7 @@ function getPluginConfiguration(jenkinsUrl){
             }
 
 
-            if(fontFamily != null && lastFontFamily != fontFamily){
+            if (fontFamily && lastFontFamily != fontFamily) {
                 $("body").css({
                     'font-family': fontFamily
                 });
@@ -814,170 +948,4 @@ function getPluginConfiguration(jenkinsUrl){
         },
         timeout: jenkinsTimeOut
     });
-}
-// - initialize variables ----------------------------------------------
-var jenkinsTimeOut = getParameterByName("jenkinsTimeOut", 15000);
-var lastJenkinsTimeOut = jenkinsTimeOut;
-
-var jenkinsUpdateInterval = getParameterByName("jenkinsUpdateInterval", 20000);
-var lastJenkinsUpdateInterval = jenkinsUpdateInterval;
-
-var paintInterval = getParameterByName("jenkinsPaintInterval", 100);
-var blinkInterval = 500;
-var lastPaintInterval = paintInterval;
-var arranDebug = true;
-
-var jenkinsUrl = arranDebug ? "http://localhost:8080/" : getParameterByName("jenkinsUrl", window.location.protocol + "://" + window.location.host + "/"
-    + window.location.pathname.replace("plugin/jenkinswalldisplay/walldisplay.html", ""));
-var viewName = getParameterByName("viewName", "All");
-var theme = getParameterByName("theme", "default");
-var fontFamily = getParameterByName("fontFamily", "sans-serif");
-var sortOrder = getParameterByName("sortOrder", "job name");
-var buildRange = getParameterByName("buildRange", "all");
-var customTheme = getParameterByName("customTheme", null);
-var showDetails = false;
-var showGravatar = false;
-var jobGravatarCache = {};
-var gravatarCounter = {};
-var showBuildNumber = true;
-var showWeatherReport = false;
-var showLastStableTimeAgo = true;
-var blinkBgPicturesWhenBuilding = false;
-var showDisabledBuilds = true;
-var maxQueuePositionToShow = 15;
-
-var jobStatusOrder = [];
-jobStatusOrder["blue"] = 0;
-jobStatusOrder["blue_building"] = 1;
-jobStatusOrder["red"] = 2;
-jobStatusOrder["red_building"] = 3;
-jobStatusOrder["yellow"] = 4;
-jobStatusOrder["yellow_building"] = 5;
-jobStatusOrder["aborted"] = 6;
-jobStatusOrder["aborted_building"] = 7;
-jobStatusOrder["grey"] = 8;
-jobStatusOrder["grey_building"] = 9;
-
-var isDebug = false;
-var debugString = getParameterByName("debug", null);
-if(debugString != null){
-    isDebug = true;
-}
-
-// ---------------------------------------------------------------------
-$.ajaxSetup({
-    cache: false
-});
-
-var jobPadding = 5;
-var jobMargin = 8;
-var jobBorderWidth = 0;
-var paintInterval = 1000;
-var jobInfoTimout = 5000;
-
-// ---------------------------------------------------------------------
-var rows = 0;
-var columns = 0;
-var jobIndex = 0;
-var jobsToDisplay = new Array();
-var serverTime = 0;
-var updateRunning = new Array();
-var updateError = null;
-var clientWidth;
-var clientHeight;
-var lastPluginVersion = null;
-var lastTheme = "default";
-var lastFontFamily = fontFamily;
-var paintRunning = false;
-
-// ---------------------------------------------------------------------
-// themes
-// ---------------------------------------------------------------------
-var themes = {};
-themes.christmas = {};
-themes["default"] = {};
-
-themes.christmas.start = function(){
-    $(document).snowfall('clear');
-    $(document).snowfall({
-        round: true,
-        minSize: 8,
-        maxSize: 12
-    }); // add rounded
-};
-themes.christmas.stop = function(){
-    $(document).snowfall('clear');
-};
-
-$(document).ready(function(){
-
-    if(isDebug){
-        showDebug();
-    }
-    $("abbr.timeago").timeago();
-
-    debug("started jenkins wall display");
-    debug("url '" + jenkinsUrl + "'");
-    debug("view name: '" + viewName + "'");
-
-    updateWindowSizes();
-
-    document.title = "Jenkins Wall Display (" + viewName + ")";
-
-    update();
-	repaint();
-    setApiInterval();
-    setPaintInterval();
-
-});
-
-window.onresize = function(event){
-    updateWindowSizes();
-};
-
-function setPaintInterval(){
-    paintIntervalId = setInterval(function(){
-        serverTime += paintInterval;
-        if(!paintRunning){
-            paintRunning = true;
-            repaint();
-            paintRunning = false;
-        }
-
-    }, paintInterval);
-}
-
-function clearPaintInterval(){
-    clearInterval(paintIntervalId);
-}
-
-function update(){
-    if(!updateRunning[viewName]){
-        getJenkinsApi(jenkinsUrl);
-    }
-
-    if(!updateRunning["queue"]){
-        getJenkinsQueue(jenkinsUrl);
-    }
-
-    if(!updateRunning["pluginconfiguration"]){
-        getPluginConfiguration(jenkinsUrl);
-    }
-}
-
-function setApiInterval(){
-    debug("timeOut: " + jenkinsTimeOut + "ms");
-    debug("update interval: " + jenkinsUpdateInterval + "ms");
-
-    jenkinsApiIntervalId = setInterval(function(){
-        update();
-    }, jenkinsUpdateInterval);
-}
-
-Math.logBase = function(n, base) {
-    return Math.log(n) / Math.log(base);
-};
-
-function clearApiInterval(){
-    clearInterval(jenkinsApiIntervalId);
 }
